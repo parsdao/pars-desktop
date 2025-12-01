@@ -28,6 +28,10 @@ import path, { join } from 'path';
 import { platform as osPlatform } from 'process';
 import url from 'url';
 
+import { ImageWorkerPool } from '../services/ImageWorkerPool';
+
+let imageWorkerPool: ImageWorkerPool;
+
 import _, { isEmpty, isNumber, isFinite } from 'lodash';
 
 import { addHandler } from '../node/global_errors';
@@ -808,6 +812,16 @@ app.on('ready', async () => {
     return;
   }
 
+  // Initialize image processing worker pool
+  imageWorkerPool = new ImageWorkerPool({
+    poolSize: 4,
+  });
+
+  // Register IPC handlers
+  ipcMain.handle('image:process', async (event, { buffer, options }) => {
+    return imageWorkerPool.processImage(buffer, options);
+  });
+
   const key = getDefaultSQLKey();
   // Try to show the main window with the default key
   // If that fails then show the password window
@@ -945,7 +959,7 @@ async function gracefulShutdown(signal: string) {
   console.warn(`Received ${signal}, shutting down: done`);
 }
 
-app.on('before-quit', () => {
+app.on('before-quit', async () => {
   console.log('before-quit event', {
     readyForShutdown: mainWindow ? readyForShutdown : null,
     shouldQuit: windowShouldQuit(),
@@ -953,6 +967,7 @@ app.on('before-quit', () => {
   if (tray) {
     tray.destroy();
   }
+  await imageWorkerPool.shutdown();
 
   windowMarkShouldQuit();
 });

@@ -1,23 +1,15 @@
 import { isBuffer, isEmpty, isFinite, isNil, isNumber } from 'lodash';
-import Vips from '../../../../../node_modules/wasm-vips/lib/vips-es6.js';
-
-import {
-  VipsMetadata,
-  type ImageProcessorValidFormat,
-  type UnknownFormat,
-} from '../image_processor/image_processor_types';
-
+import Vips from '../../node_modules/wasm-vips/lib/vips.js';
 import type {
-  ImageProcessorWorkerActions,
-  StaticOutputType,
-  WithWebpFormat,
-} from './image_processor';
+  ImageProcessorValidFormat,
+  UnknownFormat,
+  VipsMetadata,
+} from './workers/node/image_processor/image_processor_types';
+
 /* eslint-disable no-console */
 /* eslint-disable strict */
 
 let vips: typeof import('wasm-vips') | null = null;
-console.error('crossOriginIsolated:', self.crossOriginIsolated);
-console.error('SharedArrayBuffer available:', typeof SharedArrayBuffer !== 'undefined');
 
 async function initVips() {
   if (!vips) {
@@ -35,10 +27,8 @@ async function initVips() {
       // dynamicLibraries: [],
       locateFile: (file: string, scriptDirectory: string) => {
         console.log(`[Vips locateFile]: ${file} scriptDirectory: ${scriptDirectory}`);
-        return `${scriptDirectory}/wasm-vips/${file}`;
+        return `./wasm/${file}`;
       },
-      concurrency: 1,
-      PTHREAD_POOL_SIZE: 0,
       // mainScriptUrlOrBlob: undefined, // Disable worker threads
       print: (text: string) => console.log('[Vips print]:', text),
       printErr: (text: string) => console.error('[Vips error]:', text),
@@ -92,46 +82,6 @@ function isNotIterable(value) {
   // Check if the Symbol.iterator method is not a function.
   // If it's not a function or doesn't exist, the object is not iterable.
   return typeof value[Symbol.iterator] !== 'function';
-}
-
-onmessage = async (e: any) => {
-  if (isNotIterable(e.data)) {
-    console.warn('e.data is not iterable. e.data:', e.data);
-    return;
-  }
-
-  const [jobId, fnName, ...args] = e.data;
-  try {
-    const vipsLib = await initVips();
-
-    console.error('vipsLib keys:', Object.keys(vipsLib));
-
-    const fn = (workerActions as any)[fnName];
-    if (!fn) {
-      throw new Error(`Worker: job ${jobId} did not find function ${fnName}`);
-    }
-    logIfOn(`[imageProcessorWorker] ${fnName}() called with:`, ...args);
-
-    const result = await fn(...args);
-    postMessage([jobId, null, result]);
-  } catch (error) {
-    console.warn('error', error);
-
-    const errorForDisplay = prepareErrorForPostMessage(error);
-    postMessage([jobId, errorForDisplay]);
-  }
-};
-
-function prepareErrorForPostMessage(error: any) {
-  if (!error) {
-    return null;
-  }
-
-  if (error.stack) {
-    return error.stack;
-  }
-
-  return error.message;
 }
 
 function metadataSizeIsSetOrThrow(metadata: VipsMetadata, identifier: string) {
@@ -655,328 +605,332 @@ async function processNoPlanForReuploadAvatar({ inputBuffer }: { inputBuffer: Ar
   };
 }
 
-const workerActions: ImageProcessorWorkerActions = {
-  imageMetadata: async inputBuffer => {
-    if (!inputBuffer?.byteLength) {
-      throw new Error('imageMetadata: inputBuffer is required');
-    }
+export async function imageMetadata(inputBuffer: ArrayBuffer) {
+  if (!inputBuffer?.byteLength) {
+    throw new Error('imageMetadata: inputBuffer is required');
+  }
 
-    const metadata = await metadataFromBuffer(inputBuffer, false, { animated: true });
+  const metadata = await metadataFromBuffer(inputBuffer, false, { animated: true });
 
-    if (!metadata) {
-      return null;
-    }
+  if (!metadata) {
+    return null;
+  }
 
-    const metadataSize = metadataSizeIsSetOrThrow(metadata, 'imageMetadata');
+  const metadataSize = metadataSizeIsSetOrThrow(metadata, 'imageMetadata');
 
-    return {
-      size: metadataSize,
-      format: metadata.format,
-      width: metadata.width,
-      height: metadata.height,
-      isAnimated: isAnimated(metadata),
-    };
-  },
+  return {
+    size: metadataSize,
+    format: metadata.format,
+    width: metadata.width,
+    height: metadata.height,
+    isAnimated: isAnimated(metadata),
+  };
+}
 
-  processAvatarData: async (
-    inputBuffer: ArrayBufferLike,
-    planForReupload: boolean,
-    remoteChange: boolean
-  ) => {
-    if (!inputBuffer?.byteLength) {
-      throw new Error('processAvatarData: inputBuffer is required');
-    }
+export async function processAvatarData(
+  inputBuffer: ArrayBufferLike,
+  planForReupload: boolean,
+  remoteChange: boolean
+) {
+  if (!inputBuffer?.byteLength) {
+    throw new Error('processAvatarData: inputBuffer is required');
+  }
 
-    if (planForReupload) {
-      return await processPlanForReuploadAvatar({ inputBuffer, remoteChange });
-    }
-    return await processNoPlanForReuploadAvatar({ inputBuffer });
-  },
+  if (planForReupload) {
+    return await processPlanForReuploadAvatar({ inputBuffer, remoteChange });
+  }
+  return await processNoPlanForReuploadAvatar({ inputBuffer });
+}
 
-  testIntegrationFakeAvatar: async (
-    maxSidePx: number,
-    background: { r: number; g: number; b: number }
-  ) => {
-    const vipsLib = await initVips();
+export async function testIntegrationFakeAvatar(
+  maxSidePx: number,
+  background: { r: number; g: number; b: number }
+) {
+  const vipsLib = await initVips();
 
-    // Create a new image with solid color background
-    const created = vipsLib.Image.black(maxSidePx, maxSidePx, { bands: 3 }).linear(
-      [1, 1, 1],
-      [background.r, background.g, background.b]
+  // Create a new image with solid color background
+  const created = vipsLib.Image.black(maxSidePx, maxSidePx, { bands: 3 }).linear(
+    [1, 1, 1],
+    [background.r, background.g, background.b]
+  );
+
+  // Convert to WebP with quality setting
+  const createdBuffer = created.writeToBuffer('.webp', {
+    Q: webpDefaultQuality, // Q is the quality parameter in libvips
+  });
+
+  const createdMetadata = await metadataFromBuffer(createdBuffer.buffer);
+
+  if (!createdMetadata) {
+    throw new Error('testIntegrationFakeAvatar: failed to get metadata');
+  }
+
+  const size = metadataSizeIsSetOrThrow(createdMetadata, 'testIntegrationFakeAvatar');
+
+  const format = 'webp' as const;
+  return {
+    outputBuffer: createdBuffer.buffer,
+    height: createdMetadata.height,
+    width: createdMetadata.width,
+    isAnimated: false,
+    format,
+    contentType: `image/${format}` as const,
+    size,
+  };
+}
+
+export async function processForLinkPreviewThumbnail(
+  inputBuffer: ArrayBufferLike,
+  maxSidePx: number
+) {
+  if (!inputBuffer?.byteLength) {
+    throw new Error('processForLinkPreviewThumbnail: inputBuffer is required');
+  }
+
+  const parsed = await vipsFrom(inputBuffer, { animated: false });
+  const metadata = await metadataFromBuffer(inputBuffer, false, { animated: false });
+
+  if (!metadata) {
+    return null;
+  }
+
+  // for thumbnail, we actually want to enlarge the image if required
+  const resized = thumbnailCover(parsed, { maxSidePx, withoutEnlargement: false });
+  console.warn('before writeToBuffer', resized);
+  const resizedBuffer = resized.writeToBuffer('.webp', { Q: webpDefaultQuality });
+  console.warn('after writeToBuffer', resizedBuffer);
+
+  const resizedMetadata = await metadataFromBuffer(resizedBuffer.buffer);
+  console.warn('after resizedMetadata', resizedMetadata);
+
+  metadataSizeIsSetOrThrow(metadata, 'processForLinkPreviewThumbnail');
+  if (!resizedMetadata) {
+    return null;
+  }
+
+  const resizedSize = metadataSizeIsSetOrThrow(resizedMetadata, 'processForLinkPreviewThumbnail');
+
+  const format = 'webp' as const;
+
+  return {
+    outputBuffer: resizedBuffer.buffer,
+    height: resizedMetadata.height,
+    width: resizedMetadata.width,
+    format,
+    contentType: `image/${format}` as const,
+    size: resizedSize,
+  };
+}
+
+export async function processForInConversationThumbnail(
+  inputBuffer: ArrayBufferLike,
+  maxSidePx: number
+) {
+  if (!inputBuffer?.byteLength) {
+    throw new Error('processForInConversationThumbnail: inputBuffer is required');
+  }
+
+  // Note: this `animated` is false here because we want to force a static image (so no need to extract all the frames)
+  const src = await vipsFrom(inputBuffer, { animated: false });
+
+  const parsed = thumbnailCover(src, {
+    maxSidePx,
+    withoutEnlargement: false, // We actually want to enlarge the image if required for a thumbnail in conversation
+  });
+  const metadata = await metadataFromBuffer(inputBuffer, false, { animated: false });
+
+  if (!metadata) {
+    return null;
+  }
+
+  const animated = isAnimated(metadata);
+
+  const awaited = await Promise.race([
+    parsed.webp({ quality: webpDefaultQuality }).toBuffer(),
+    sleepFor(defaultTimeoutProcessingSeconds * 1000), // it seems that timeout is not working as expected in sharp --'
+  ]);
+
+  if (!isBuffer(awaited)) {
+    throw new Error('Image processing timed out');
+  }
+
+  const resizedBuffer = awaited as Buffer;
+  const resizedMetadata = await metadataFromBuffer(resizedBuffer);
+
+  if (!resizedMetadata) {
+    return null;
+  }
+
+  const size = metadataSizeIsSetOrThrow(resizedMetadata, 'processForInConversationThumbnail');
+
+  const formatDetails = { format: 'webp' as const, contentType: 'image/webp' as const };
+
+  return {
+    outputBuffer: resizedBuffer.buffer,
+    height: resizedMetadata.height,
+    width: resizedMetadata.width,
+    ...formatDetails,
+    size,
+    isAnimated: animated,
+  };
+}
+
+export async function processForFileServerUpload(
+  inputBuffer: ArrayBufferLike,
+  maxSidePx: number,
+  maxSizeBytes: number
+) {
+  if (!inputBuffer?.byteLength) {
+    throw new Error('processForFileServerUpload: inputBuffer is required');
+  }
+  const lossyFormats = ['jpeg', 'webp', 'avif'];
+  const start = Date.now();
+  const metadata = await metadataFromBuffer(inputBuffer, false);
+
+  if (
+    !metadata ||
+    !metadata.format ||
+    !isSupportedForOutput(metadata.format) ||
+    !metadata.width ||
+    !metadata.height
+  ) {
+    logIfOn(`Unsupported format: ${metadata?.format}`);
+    return null;
+  }
+
+  const animated = isAnimated(metadata);
+
+  const isLossyFormat = lossyFormats.includes(metadata.format);
+
+  // Note: this will resize
+  const isLossyFormatButFits =
+    isLossyFormat &&
+    inputBuffer.byteLength < maxSizeBytes &&
+    metadata.width <= maxSidePx &&
+    metadata.height <= maxSidePx;
+
+  // If the image is lossy but fits in the max size, we can just return it as is.
+  // This is to speed up large image additions to the staged attachments list.
+  if (isLossyFormatButFits) {
+    const size = metadataSizeIsSetOrThrow(metadata, 'processForFileServerUpload');
+    logIfOn(
+      `isLossyFormatButFits: returning buffer of size ${size} and WxH: ${metadata.width}x${metadata.height}`
     );
 
-    // Convert to WebP with quality setting
-    const createdBuffer = created.writeToBuffer('.webp', {
-      Q: webpDefaultQuality, // Q is the quality parameter in libvips
-    });
-
-    const createdMetadata = await metadataFromBuffer(createdBuffer.buffer);
-
-    if (!createdMetadata) {
-      throw new Error('testIntegrationFakeAvatar: failed to get metadata');
-    }
-
-    const size = metadataSizeIsSetOrThrow(createdMetadata, 'testIntegrationFakeAvatar');
-
-    const format = 'webp' as const;
     return {
-      outputBuffer: createdBuffer.buffer,
-      height: createdMetadata.height,
-      width: createdMetadata.width,
-      isAnimated: false,
-      format,
-      contentType: `image/${format}` as const,
+      format: metadata.format,
+      outputBuffer: inputBuffer,
       size,
+      width: metadata.width,
+      height: metadata.height, // this one is only the frame height already, no need for `metadataToFrameHeight`
+      isAnimated: isAnimated(metadata),
     };
-  },
+  }
 
-  processForLinkPreviewThumbnail: async (inputBuffer: ArrayBufferLike, maxSidePx: number) => {
-    if (!inputBuffer?.byteLength) {
-      throw new Error('processForLinkPreviewThumbnail: inputBuffer is required');
-    }
+  // If image is lossless, we cannot adjust the quality and we assume we don't want to scale it down either (as it can be slow)
+  // so just return the source buffer
+  if (!isLossyFormat) {
+    if (inputBuffer.byteLength >= maxSizeBytes) {
+      logIfOn(`not lossy format and does not fit`);
 
-    const parsed = await vipsFrom(inputBuffer, { animated: false });
-    const metadata = await metadataFromBuffer(inputBuffer, false, { animated: false });
-
-    if (!metadata) {
       return null;
     }
 
-    // for thumbnail, we actually want to enlarge the image if required
-    const resized = await thumbnailCover(parsed, { maxSidePx, withoutEnlargement: false });
-    console.warn('before writeToBuffer', resized);
-    const resizedBuffer = await resized.writeToBuffer('.webp', { Q: webpDefaultQuality });
-    console.warn('after writeToBuffer', resizedBuffer);
-
-    const resizedMetadata = await metadataFromBuffer(resizedBuffer);
-    console.warn('after resizedMetadata', resizedMetadata);
-
-    metadataSizeIsSetOrThrow(metadata, 'processForLinkPreviewThumbnail');
-    if (!resizedMetadata) {
-      return null;
-    }
-
-    const resizedSize = metadataSizeIsSetOrThrow(resizedMetadata, 'processForLinkPreviewThumbnail');
-
-    const format = 'webp' as const;
+    const size = metadataSizeIsSetOrThrow(metadata, 'processForFileServerUpload');
+    logIfOn(
+      `not lossy format but fits, returning buffer of size ${size} and WxH: ${metadata.width}x${metadata.height}`
+    );
 
     return {
-      outputBuffer: resizedBuffer.buffer,
-      height: resizedMetadata.height,
-      width: resizedMetadata.width,
-      format,
-      contentType: `image/${format}` as const,
-      size: resizedSize,
-    };
-  },
-
-  processForInConversationThumbnail: async (inputBuffer: ArrayBufferLike, maxSidePx: number) => {
-    if (!inputBuffer?.byteLength) {
-      throw new Error('processForInConversationThumbnail: inputBuffer is required');
-    }
-
-    // Note: this `animated` is false here because we want to force a static image (so no need to extract all the frames)
-    const src = await vipsFrom(inputBuffer, { animated: false });
-
-    const parsed = await thumbnailCover(src, {
-      maxSidePx,
-      withoutEnlargement: false, // We actually want to enlarge the image if required for a thumbnail in conversation
-    });
-    const metadata = await metadataFromBuffer(inputBuffer, false, { animated: false });
-
-    if (!metadata) {
-      return null;
-    }
-
-    const animated = isAnimated(metadata);
-
-    const awaited = await Promise.race([
-      parsed.webp({ quality: webpDefaultQuality }).toBuffer(),
-      sleepFor(defaultTimeoutProcessingSeconds * 1000), // it seems that timeout is not working as expected in sharp --'
-    ]);
-
-    if (!isBuffer(awaited)) {
-      throw new Error('Image processing timed out');
-    }
-
-    const resizedBuffer = awaited as Buffer;
-    const resizedMetadata = await metadataFromBuffer(resizedBuffer);
-
-    if (!resizedMetadata) {
-      return null;
-    }
-
-    const size = metadataSizeIsSetOrThrow(resizedMetadata, 'processForInConversationThumbnail');
-
-    const formatDetails = { format: 'webp' as const, contentType: 'image/webp' as const };
-
-    return {
-      outputBuffer: resizedBuffer.buffer,
-      height: resizedMetadata.height,
-      width: resizedMetadata.width,
-      ...formatDetails,
+      format: metadata.format,
+      outputBuffer: inputBuffer,
       size,
-      isAnimated: animated,
+      width: metadata.width,
+      height: metadata.height, // this one is only the frame height already, no need for `metadataToFrameHeight`
+      isAnimated: isAnimated(metadata),
     };
-  },
+  }
 
-  processForFileServerUpload: async (
-    inputBuffer: ArrayBufferLike,
-    maxSidePx: number,
-    maxSizeBytes: number
-  ) => {
-    if (!inputBuffer?.byteLength) {
-      throw new Error('processForFileServerUpload: inputBuffer is required');
-    }
-    const lossyFormats = ['jpeg', 'webp', 'avif'];
-    const start = Date.now();
-    const metadata = await metadataFromBuffer(inputBuffer, false);
+  const base = await vipsFrom(inputBuffer, { animated });
 
-    if (
-      !metadata ||
-      !metadata.format ||
-      !isSupportedForOutput(metadata.format) ||
-      !metadata.width ||
-      !metadata.height
-    ) {
-      logIfOn(`Unsupported format: ${metadata?.format}`);
-      return null;
-    }
+  // Resize if needed
+  if (metadata.width > maxSidePx || metadata.height > maxSidePx) {
+    base.resize({
+      width: maxSidePx,
+      height: maxSidePx,
+      fit: 'inside',
+      withoutEnlargement: true,
+    });
+  }
 
-    const animated = isAnimated(metadata);
+  // if we can't get a picture with a quality of more than 30, consider it a failure and return null
+  const qualityRange = [95, 85, 75, 55, 30] as const;
+  for (const quality of qualityRange) {
+    const pipeline = base.clone();
 
-    const isLossyFormat = lossyFormats.includes(metadata.format);
-
-    // Note: this will resize
-    const isLossyFormatButFits =
-      isLossyFormat &&
-      inputBuffer.byteLength < maxSizeBytes &&
-      metadata.width <= maxSidePx &&
-      metadata.height <= maxSidePx;
-
-    // If the image is lossy but fits in the max size, we can just return it as is.
-    // This is to speed up large image additions to the staged attachments list.
-    if (isLossyFormatButFits) {
-      const size = metadataSizeIsSetOrThrow(metadata, 'processForFileServerUpload');
-      logIfOn(
-        `isLossyFormatButFits: returning buffer of size ${size} and WxH: ${metadata.width}x${metadata.height}`
-      );
-
-      return {
-        format: metadata.format,
-        outputBuffer: inputBuffer,
-        size,
-        width: metadata.width,
-        height: metadata.height, // this one is only the frame height already, no need for `metadataToFrameHeight`
-        isAnimated: isAnimated(metadata),
-      };
+    switch (metadata.format) {
+      case 'jpeg':
+        pipeline.jpeg({ quality });
+        break;
+      case 'webp':
+        pipeline.webp({ quality });
+        break;
+      default:
+        throw new Error(`Unsupported format: ${metadata.format}`);
     }
 
-    // If image is lossless, we cannot adjust the quality and we assume we don't want to scale it down either (as it can be slow)
-    // so just return the source buffer
-    if (!isLossyFormat) {
-      if (inputBuffer.byteLength >= maxSizeBytes) {
-        logIfOn(`not lossy format and does not fit`);
+    // eslint-disable-next-line no-await-in-loop
+    const buffer = await pipeline.toBuffer(); // no timeout here for now
 
+    if (buffer.length < maxSizeBytes) {
+      // eslint-disable-next-line no-await-in-loop
+      const outputMetadata = await metadataFromBuffer(buffer, false);
+
+      if (!outputMetadata) {
         return null;
       }
 
-      const size = metadataSizeIsSetOrThrow(metadata, 'processForFileServerUpload');
+      const size = metadataSizeIsSetOrThrow(outputMetadata, 'processForFileServerUpload');
       logIfOn(
-        `not lossy format but fits, returning buffer of size ${size} and WxH: ${metadata.width}x${metadata.height}`
-      );
-
-      return {
-        format: metadata.format,
-        outputBuffer: inputBuffer,
-        size,
-        width: metadata.width,
-        height: metadata.height, // this one is only the frame height already, no need for `metadataToFrameHeight`
-        isAnimated: isAnimated(metadata),
-      };
-    }
-
-    const base = await vipsFrom(inputBuffer, { animated });
-
-    // Resize if needed
-    if (metadata.width > maxSidePx || metadata.height > maxSidePx) {
-      base.resize({
-        width: maxSidePx,
-        height: maxSidePx,
-        fit: 'inside',
-        withoutEnlargement: true,
-      });
-    }
-
-    // if we can't get a picture with a quality of more than 30, consider it a failure and return null
-    const qualityRange = [95, 85, 75, 55, 30] as const;
-    for (const quality of qualityRange) {
-      const pipeline = base.clone();
-
-      switch (metadata.format) {
-        case 'jpeg':
-          pipeline.jpeg({ quality });
-          break;
-        case 'webp':
-          pipeline.webp({ quality });
-          break;
-        default:
-          throw new Error(`Unsupported format: ${metadata.format}`);
-      }
-
-      // eslint-disable-next-line no-await-in-loop
-      const buffer = await pipeline.toBuffer(); // no timeout here for now
-
-      if (buffer.length < maxSizeBytes) {
-        // eslint-disable-next-line no-await-in-loop
-        const outputMetadata = await metadataFromBuffer(buffer, false);
-
-        if (!outputMetadata) {
-          return null;
-        }
-
-        const size = metadataSizeIsSetOrThrow(outputMetadata, 'processForFileServerUpload');
-        logIfOn(
-          `[imageProcessorWorker] processForFileServerUpload: DONE quality ${quality} took ${
-            Date.now() - start
-          }ms for}`
-        );
-        logIfOn(
-          `\t src${formattedMetadata({ width: metadata.width, height: metadata.height, format: metadata.format, size: inputBuffer.byteLength })} `
-        );
-        logIfOn(
-          `\t dest${formattedMetadata({ width: outputMetadata.width, height: outputMetadata.height, format: metadata.format, size: buffer.buffer.byteLength })} `
-        );
-
-        return {
-          format: outputMetadata.format,
-          outputBuffer: buffer.buffer,
-          size,
-          width: outputMetadata.width,
-          height: outputMetadata.height, // this one is only the frame height already, no need for `metadataToFrameHeight`
-          isAnimated: isAnimated(outputMetadata),
-        };
-      }
-      logIfOn(
-        `[imageProcessorWorker] processForFileServerUpload: took so far ${
+        `[imageProcessorWorker] processForFileServerUpload: DONE quality ${quality} took ${
           Date.now() - start
-        }ms with quality ${quality}`
+        }ms for}`
       );
       logIfOn(
         `\t src${formattedMetadata({ width: metadata.width, height: metadata.height, format: metadata.format, size: inputBuffer.byteLength })} `
       );
-    }
+      logIfOn(
+        `\t dest${formattedMetadata({ width: outputMetadata.width, height: outputMetadata.height, format: metadata.format, size: buffer.buffer.byteLength })} `
+      );
 
+      return {
+        format: outputMetadata.format,
+        outputBuffer: buffer.buffer,
+        size,
+        width: outputMetadata.width,
+        height: outputMetadata.height, // this one is only the frame height already, no need for `metadataToFrameHeight`
+        isAnimated: isAnimated(outputMetadata),
+      };
+    }
     logIfOn(
-      `[imageProcessorWorker] processForFileServerUpload: failed to get a buffer of size ${maxSizeBytes} for ${inputBuffer.byteLength} bytes for image of ${metadata.width}x${metadata.height} with format ${metadata.format}`
-    );
-    logIfOn(
-      `[imageProcessorWorker] processForFileServerUpload: failed after ${Date.now() - start}ms`
+      `[imageProcessorWorker] processForFileServerUpload: took so far ${
+        Date.now() - start
+      }ms with quality ${quality}`
     );
     logIfOn(
       `\t src${formattedMetadata({ width: metadata.width, height: metadata.height, format: metadata.format, size: inputBuffer.byteLength })} `
     );
+  }
 
-    return null;
-  },
-};
+  logIfOn(
+    `[imageProcessorWorker] processForFileServerUpload: failed to get a buffer of size ${maxSizeBytes} for ${inputBuffer.byteLength} bytes for image of ${metadata.width}x${metadata.height} with format ${metadata.format}`
+  );
+  logIfOn(
+    `[imageProcessorWorker] processForFileServerUpload: failed after ${Date.now() - start}ms`
+  );
+  logIfOn(
+    `\t src${formattedMetadata({ width: metadata.width, height: metadata.height, format: metadata.format, size: inputBuffer.byteLength })} `
+  );
+
+  return null;
+}
