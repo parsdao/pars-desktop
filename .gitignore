@@ -56,3 +56,5 @@ ts/webworker/workers/node/**/*.node
 ts/localization/locales.ts
 
 .yarn/
+ts/webworker/workers/node/image_processor/wasm-vips/*
+ts/webworker/workers/node/image_processor/*.wasm

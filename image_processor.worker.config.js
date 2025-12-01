@@ -1,5 +1,6 @@
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const path = require('path');
+const CopyPlugin = require('copy-webpack-plugin');
 
 module.exports = {
   entry: './ts/webworker/workers/node/image_processor/image_processor.worker.ts',
@@ -9,6 +10,10 @@ module.exports = {
         test: /\.tsx?$/,
         use: 'ts-loader',
         exclude: /node_modules/,
+      },
+      {
+        test: /\.wasm$/,
+        type: 'asset/inline',
       },
     ],
   },
@@ -26,9 +31,7 @@ module.exports = {
     path: path.resolve(__dirname, 'ts', 'webworker', 'workers', 'node', 'image_processor'),
   },
   target: 'node',
-  externals: {
-    sharp: 'commonjs sharp',
-  },
+
   optimization: {
     minimize: process.env.NODE_ENV === 'production',
   },
@@ -38,4 +41,26 @@ module.exports = {
     aggregateTimeout: 200,
     poll: 1000,
   },
+  plugins: [
+    new CopyPlugin({
+      patterns: [
+        {
+          from: 'node_modules/wasm-vips/lib/vips.wasm',
+          to: 'wasm-vips/vips.wasm',
+        },
+        {
+          from: 'node_modules/wasm-vips/lib/vips-jxl.wasm',
+          to: 'wasm-vips/vips-jxl.wasm',
+        },
+        {
+          from: 'node_modules/wasm-vips/lib/vips-heif.wasm',
+          to: 'wasm-vips/vips-heif.wasm',
+        },
+        {
+          from: 'node_modules/wasm-vips/lib/vips-resvg.wasm',
+          to: 'wasm-vips/vips-resvg.wasm',
+        },
+      ],
+    }),
+  ],
 };

@@ -1,5 +1,8 @@
-import { isBuffer, isEmpty, isFinite, isNumber } from 'lodash';
-import sharp from 'sharp';
+import { isBuffer, isEmpty, isFinite, isNil, isNumber } from 'lodash';
+import Vips from '../../../../../node_modules/wasm-vips/lib/vips-node.js';
+
+import { VipsMetadata, type VipsFormat } from '../image_processor/image_processor_types';
+
 import type {
   ImageProcessorWorkerActions,
   StaticOutputType,
@@ -7,6 +10,41 @@ import type {
 } from './image_processor';
 /* eslint-disable no-console */
 /* eslint-disable strict */
+
+let vips: typeof import('wasm-vips') | null = null;
+console.error('crossOriginIsolated:', self.crossOriginIsolated);
+console.error('SharedArrayBuffer available:', typeof SharedArrayBuffer !== 'undefined');
+
+async function initVips() {
+  if (!vips) {
+    console.log('about to init Vips');
+
+    // Fetch the WASM file manually
+    // const wasmPath = '../../../../../node_modules/wasm-vips/lib/vips.wasm';
+    // const response = await fetch(wasmPath);
+    // const wasmBinary = await response.arrayBuffer();
+
+    // console.log('WASM loaded, size:', wasmBinary.byteLength);
+
+    vips = await Vips({
+      // wasmBinary: wasmBinary,
+      // dynamicLibraries: [],
+      locateFile: (file: string, scriptDirectory: string) => {
+        console.log(`[Vips locateFile]: ${file} scriptDirectory: ${scriptDirectory}`);
+        return `${scriptDirectory}/wasm-vips/${file}`;
+      },
+
+      // mainScriptUrlOrBlob: undefined, // Disable worker threads
+      print: (text: string) => console.log('[Vips print]:', text),
+      printErr: (text: string) => console.error('[Vips error]:', text),
+    });
+    // Debug: Log what's actually available
+    console.error('Vips initialized:', vips);
+    console.error('Vips.Image:', vips.Image);
+    console.error('Available methods:', Object.keys(vips));
+  }
+  return vips;
+}
 
 const DEBUG_IMAGE_PROCESSOR_WORKER = !isEmpty(process.env.DEBUG_IMAGE_PROCESSOR_WORKER);
 
@@ -41,10 +79,33 @@ const maxAvatarDetails = {
   maxSideNoReuploadRequired: 200,
 };
 
-onmessage = async (e: any) => {
-  const [jobId, fnName, ...args] = e.data;
+function isNotIterable(value) {
+  // Exclude null and undefined as they are not iterable.
+  if (isNil(value)) {
+    return true;
+  }
+  // Check if the Symbol.iterator method is not a function.
+  // If it's not a function or doesn't exist, the object is not iterable.
+  return typeof value[Symbol.iterator] !== 'function';
+}
 
+onmessage = async (e: any) => {
+  if (isNotIterable(e.data)) {
+    console.warn('e.data is not iterable. e.data:', e.data);
+    return;
+  }
+
+  const [jobId, fnName, ...args] = e.data;
   try {
+    console.warn('e.data', e.data);
+
+    const vipsLib = await initVips();
+
+    console.error('=== VIPS DEBUG ===');
+    console.error('vipsLib type:', typeof vipsLib);
+    console.error('vipsLib keys:', Object.keys(vipsLib));
+    console.error('vipsLib.Image:', vipsLib.Image);
+
     const fn = (workerActions as any)[fnName];
     if (!fn) {
       throw new Error(`Worker: job ${jobId} did not find function ${fnName}`);
@@ -54,6 +115,8 @@ onmessage = async (e: any) => {
     const result = await fn(...args);
     postMessage([jobId, null, result]);
   } catch (error) {
+    console.warn('error', error);
+
     const errorForDisplay = prepareErrorForPostMessage(error);
     postMessage([jobId, errorForDisplay]);
   }
@@ -71,7 +134,7 @@ function prepareErrorForPostMessage(error: any) {
   return error.message;
 }
 
-function metadataSizeIsSetOrThrow(metadata: sharp.Metadata, identifier: string) {
+function metadataSizeIsSetOrThrow(metadata: VipsMetadata, identifier: string) {
   if (!isNumber(metadata.size) || !isFinite(metadata.size)) {
     throw new Error(`assertMetadataSizeIsSet: ${identifier} metadata.size is not set`);
   }
@@ -79,65 +142,96 @@ function metadataSizeIsSetOrThrow(metadata: sharp.Metadata, identifier: string) 
   return metadata.size;
 }
 
-function isAnimated(metadata: sharp.Metadata) {
-  return (metadata.pages || 0) > 1; // more than 1 frame means that the image is animated
+function isAnimated(metadata: VipsMetadata) {
+  return (metadata.pages || 0) > 1;
 }
 
-function centerCoverOpts({
-  maxSidePx,
-  withoutEnlargement,
-}: {
-  maxSidePx: number;
-  withoutEnlargement: boolean;
-}) {
-  return {
-    height: maxSidePx,
-    width: maxSidePx,
-    fit: 'cover' as const, // a thumbnail we generate should contain the source image
+function thumbnailCover(
+  image: Vips.Image,
+  {
+    maxSidePx,
     withoutEnlargement,
-  };
+  }: {
+    maxSidePx: number;
+    withoutEnlargement: boolean;
+  }
+) {
+  if (withoutEnlargement && image.width <= maxSidePx && image.height <= maxSidePx) {
+    return image;
+  }
+
+  return image.thumbnailImage(maxSidePx, {
+    height: maxSidePx,
+    size: 'both',
+    crop: 'centre',
+  });
 }
 
 function formattedMetadata(metadata: {
   width: number | undefined;
   height: number | undefined;
-  format: keyof sharp.FormatEnum;
+  format: VipsFormat;
   size: number;
 }) {
-  return `(${metadata.width}x${metadata.height}, format:${String(metadata.format)}  of ${metadata.size} bytes)`;
+  const formatName = metadata.format.replace(/^\./, '');
+  return `(${metadata.width}x${metadata.height}, format:${formatName} of ${metadata.size} bytes)`;
 }
 
-function sharpFrom(inputBuffer: ArrayBufferLike | Buffer, options?: sharp.SharpOptions) {
-  if (inputBuffer instanceof Buffer) {
-    return sharp(inputBuffer, options).rotate();
-  }
-  return sharp(new Uint8Array(inputBuffer), options).rotate();
+type vipsFromOptions = { animated: boolean };
+
+async function vipsFrom(inputBuffer: ArrayBufferLike | Buffer, { animated }: vipsFromOptions) {
+  const vipsLib = await initVips();
+
+  const buffer =
+    inputBuffer instanceof Buffer ? new Uint8Array(inputBuffer) : new Uint8Array(inputBuffer);
+
+  // Load with all frames if animated is true
+  const loadOptions = animated ? `n=-1` : '';
+  const image = vipsLib.Image.newFromBuffer(buffer, loadOptions);
+
+  // Auto-rotate based on EXIF orientation
+  return image.autorot();
 }
 
-function metadataToFrameHeight(metadata: sharp.Metadata) {
+function metadataToFrameHeight(metadata: VipsMetadata) {
   const frameCount = Math.max(metadata.pages || 0, 1);
   const frameHeight =
     metadata.height && frameCount ? metadata.height / frameCount : metadata.height;
   return frameHeight;
 }
 
+function getVipsMetadata(image: Vips.Image): VipsMetadata {
+  console.warn('filter image.format', image.format);
+  return {
+    width: image.width,
+    height: image.height,
+    bands: image.bands,
+    format: image.format,
+    space: image.interpretation,
+    pages: image.get('n-pages') || 1,
+    pageHeight: image.get('page-height'),
+    hasAlpha: image.hasAlpha(),
+    orientation: image.get('orientation'),
+  };
+}
+
 /**
- * Wrapper around `sharp.metadata` as it throws if not a valid image, and we usually
+ * Wrapper around vips `metadata` as it throws if not a valid image, and we usually
  * want to just return null.
  *
- * Note: this will also orient a jpeg if needed. (i.e. calls rotate() through sharpFrom)
+ * Note: this will also orient a jpeg if needed. (i.e. calls rotate() through vipsFrom)
  * Note: metadata height will be set to the frame height, not the full height
- * of the canvas (as sharp.metadata does with animated webp)
+ * of the canvas (as vips.metadata does with animated webp)
  */
 async function metadataFromBuffer(
   inputBuffer: ArrayBufferLike | Buffer,
   rethrow = false,
-  options?: sharp.SharpOptions
+  options?: Pick<vipsFromOptions, 'animated'>
 ) {
   // Note: this might throw and we want to allow the error to be forwarded to the user if that happens.
   // A toast will display the error
   try {
-    const metadata = await sharpFrom(inputBuffer, options).metadata();
+    const metadata = getVipsMetadata(await vipsFrom(inputBuffer, options));
     const frameHeight = metadataToFrameHeight(metadata);
     return { ...metadata, height: frameHeight };
   } catch (e) {
@@ -165,15 +259,13 @@ async function extractFirstFrameWebp(
     throw new Error('extractFirstFrameWebp: input is not animated');
   }
 
-  const webp = sharpFrom(inputBuffer, { pages: 1 })
-    .resize(
-      centerCoverOpts({
-        // Note: the extracted avatar fallback is never used for reupload
-        maxSidePx: maxAvatarDetails.maxSideNoReuploadRequired,
-        withoutEnlargement: true,
-      })
-    )
-    .webp({ quality: webpDefaultQuality });
+  const src = await vipsFrom(inputBuffer, { animated: false });
+  const cover = await thumbnailCover(src, {
+    // Note: the extracted avatar fallback is never used for reupload
+    maxSidePx: maxAvatarDetails.maxSideNoReuploadRequired,
+    withoutEnlargement: true,
+  });
+  const webp = cover.webp({ quality: webpDefaultQuality });
 
   const outputBuffer = await webp.toBuffer();
   const outputMetadata = await metadataFromBuffer(outputBuffer);
@@ -240,7 +332,7 @@ async function extractMainAvatarDetails({
   resizedMetadata,
 }: {
   resizedBuffer: ArrayBufferLike;
-  resizedMetadata: sharp.Metadata;
+  resizedMetadata: VipsMetadata;
   planForReupload: boolean;
   isSourceGif: boolean;
 }) {
@@ -340,10 +432,11 @@ async function processPlanForReuploadAvatar({
     logIfOn(
       `[imageProcessorWorker] src is gif, trying to convert to webp with timeout of ${defaultTimeoutProcessingSeconds}s`
     );
+    const src = await vipsFrom(inputBuffer, { animated: true });
     // See the comment in image_processor.d.ts:
     // We want to try to convert a gif to webp, but if it takes too long or the resulting file size is too big, we will just use the original gif.
     awaited = await Promise.race([
-      sharpFrom(inputBuffer, { animated: true }).resize(resizeOpts).webp().toBuffer(),
+      src.resize(resizeOpts).webp().toBuffer(),
       sleepFor(defaultTimeoutProcessingSeconds * 1000), // it seems that timeout is not working as expected in sharp --'
     ]);
     if (awaited && isBuffer(awaited)) {
@@ -355,7 +448,7 @@ async function processPlanForReuploadAvatar({
     }
   } else {
     // when not planning for reupload, we always want a webp, and no timeout for that
-    awaited = await sharpFrom(inputBuffer, { animated: true })
+    awaited = await vipsFrom(inputBuffer, { animated: true })
       .resize(resizeOpts)
       .webp({ quality: webpDefaultQuality })
       .toBuffer();
@@ -466,7 +559,7 @@ async function processNoPlanForReuploadAvatar({ inputBuffer }: { inputBuffer: Ar
   }
 
   // generate a square image of the avatar, scaled down or up to `maxSide`
-  const resized = sharpFrom(inputBuffer, { animated: true }).resize(
+  const resized = vipsFrom(inputBuffer, { animated: true }).resize(
     centerCoverOpts({
       maxSidePx: sizeRequired,
       withoutEnlargement: true,
@@ -559,20 +652,22 @@ const workerActions: ImageProcessorWorkerActions = {
     maxSidePx: number,
     background: { r: number; g: number; b: number }
   ) => {
-    const created = sharp({
-      create: {
-        width: maxSidePx,
-        height: maxSidePx,
-        channels: 3, // RGB
-        background,
-      },
-    }).webp({ quality: webpDefaultQuality });
+    const vipsLib = await initVips();
 
-    const createdBuffer = await created.toBuffer();
-    const createdMetadata = await metadataFromBuffer(createdBuffer);
+    // Create a new image with solid color background
+    const created = vipsLib.Image.black(maxSidePx, maxSidePx, { bands: 3 }).linear(
+      [1, 1, 1],
+      [background.r, background.g, background.b]
+    );
+
+    // Convert to WebP with quality setting
+    const createdBuffer = created.writeToBuffer('.webp', {
+      Q: webpDefaultQuality, // Q is the quality parameter in libvips
+    });
+
+    const createdMetadata = await metadataFromBuffer(createdBuffer.buffer);
 
     if (!createdMetadata) {
-      // Note: throwing here is fine, as we control the source buffer
       throw new Error('testIntegrationFakeAvatar: failed to get metadata');
     }
 
@@ -581,7 +676,7 @@ const workerActions: ImageProcessorWorkerActions = {
     const format = 'webp' as const;
     return {
       outputBuffer: createdBuffer.buffer,
-      height: createdMetadata.height, // this one is only the frame height already, no need for `metadataToFrameHeight`
+      height: createdMetadata.height,
       width: createdMetadata.width,
       isAnimated: false,
       format,
@@ -595,7 +690,7 @@ const workerActions: ImageProcessorWorkerActions = {
       throw new Error('processForLinkPreviewThumbnail: inputBuffer is required');
     }
 
-    const parsed = sharpFrom(inputBuffer, { animated: false });
+    const parsed = vipsFrom(inputBuffer, { animated: false });
     const metadata = await metadataFromBuffer(inputBuffer, false, { animated: false });
 
     if (!metadata) {
@@ -605,7 +700,7 @@ const workerActions: ImageProcessorWorkerActions = {
     metadataSizeIsSetOrThrow(metadata, 'processForLinkPreviewThumbnail');
 
     // for thumbnail, we actually want to enlarge the image if required
-    const resized = parsed.resize(centerCoverOpts({ maxSidePx, withoutEnlargement: false }));
+    const resized = await thumbnailCover(parsed, { maxSidePx, withoutEnlargement: false });
 
     const resizedBuffer = await resized.webp({ quality: webpDefaultQuality }).toBuffer();
     const resizedMetadata = await metadataFromBuffer(resizedBuffer);
@@ -634,9 +729,12 @@ const workerActions: ImageProcessorWorkerActions = {
     }
 
     // Note: this `animated` is false here because we want to force a static image (so no need to extract all the frames)
-    const parsed = sharpFrom(inputBuffer, { animated: false }).resize(
-      centerCoverOpts({ maxSidePx, withoutEnlargement: false }) // We actually want to enlarge the image if required for a thumbnail in conversation
-    );
+    const src = await vipsFrom(inputBuffer, { animated: false });
+
+    const parsed = await thumbnailCover(src, {
+      maxSidePx,
+      withoutEnlargement: false, // We actually want to enlarge the image if required for a thumbnail in conversation
+    });
     const metadata = await metadataFromBuffer(inputBuffer, false, { animated: false });
 
     if (!metadata) {
@@ -751,7 +849,7 @@ const workerActions: ImageProcessorWorkerActions = {
       };
     }
 
-    const base = sharpFrom(inputBuffer, { animated }).rotate();
+    const base = vipsFrom(inputBuffer, { animated }).rotate();
 
     // Resize if needed
     if (metadata.width > maxSidePx || metadata.height > maxSidePx) {

@@ -45,6 +45,9 @@ const getRealPath = (p: string) => fs.realpathSync(p);
 app.commandLine.appendSwitch('disable-renderer-backgrounding');
 app.commandLine.appendSwitch('disable-background-timer-throttling');
 app.commandLine.appendSwitch('disable-backgrounding-occluded-windows');
+
+app.commandLine.appendSwitch('enable-features', 'SharedArrayBuffer');
+
 if (!process.env.SESSION_ALLOW_APP_SUSPENSION) {
   console.log('SESSION_ALLOW_APP_SUSPENSION is not set, so we prevent app suspension');
   powerSaveBlocker.start('prevent-app-suspension');
@@ -346,6 +349,7 @@ async function createWindow() {
       nativeWindowOpen: true,
       spellcheck: await getSpellCheckSetting(),
       backgroundThrottling: false,
+      additionalArguments: ['--enable-features=SharedArrayBuffer'],
     },
     // only set icon for Linux, the executable one will be used by default for other platforms
     icon:
@@ -388,6 +392,16 @@ async function createWindow() {
 
   // Create the browser window.
   mainWindow = new BrowserWindow(windowOptions);
+  mainWindow.webContents.session.webRequest.onHeadersReceived((details, callback) => {
+    console.warn('details:', details);
+    callback({
+      responseHeaders: {
+        ...details.responseHeaders,
+        'Cross-Origin-Opener-Policy': ['same-origin'],
+        'Cross-Origin-Embedder-Policy': ['require-corp'],
+      },
+    });
+  });
 
   setupSpellChecker(mainWindow);
 
