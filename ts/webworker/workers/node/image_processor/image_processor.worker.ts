@@ -1,7 +1,11 @@
 import { isBuffer, isEmpty, isFinite, isNil, isNumber } from 'lodash';
 import Vips from '../../../../../node_modules/wasm-vips/lib/vips-node.js';
 
-import { VipsMetadata, type VipsFormat } from '../image_processor/image_processor_types';
+import {
+  VipsMetadata,
+  type ImageProcessorValidFormat,
+  type UnknownFormat,
+} from '../image_processor/image_processor_types';
 
 import type {
   ImageProcessorWorkerActions,
@@ -33,7 +37,7 @@ async function initVips() {
         console.log(`[Vips locateFile]: ${file} scriptDirectory: ${scriptDirectory}`);
         return `${scriptDirectory}/wasm-vips/${file}`;
       },
-
+      concurrency: 1,
       // mainScriptUrlOrBlob: undefined, // Disable worker threads
       print: (text: string) => console.log('[Vips print]:', text),
       printErr: (text: string) => console.error('[Vips error]:', text),
@@ -97,14 +101,9 @@ onmessage = async (e: any) => {
 
   const [jobId, fnName, ...args] = e.data;
   try {
-    console.warn('e.data', e.data);
-
     const vipsLib = await initVips();
 
-    console.error('=== VIPS DEBUG ===');
-    console.error('vipsLib type:', typeof vipsLib);
     console.error('vipsLib keys:', Object.keys(vipsLib));
-    console.error('vipsLib.Image:', vipsLib.Image);
 
     const fn = (workerActions as any)[fnName];
     if (!fn) {
@@ -136,6 +135,7 @@ function prepareErrorForPostMessage(error: any) {
 
 function metadataSizeIsSetOrThrow(metadata: VipsMetadata, identifier: string) {
   if (!isNumber(metadata.size) || !isFinite(metadata.size)) {
+    debugger;
     throw new Error(`assertMetadataSizeIsSet: ${identifier} metadata.size is not set`);
   }
 
@@ -155,22 +155,40 @@ function thumbnailCover(
     maxSidePx: number;
     withoutEnlargement: boolean;
   }
-) {
-  if (withoutEnlargement && image.width <= maxSidePx && image.height <= maxSidePx) {
+): Vips.Image {
+  const currentWidth = image.width;
+  const currentHeight = image.height;
+
+  console.log('Image object:', image);
+
+  // Check if we should skip enlargement
+  if (withoutEnlargement && currentWidth <= maxSidePx && currentHeight <= maxSidePx) {
     return image;
   }
 
-  return image.thumbnailImage(maxSidePx, {
-    height: maxSidePx,
-    size: 'both',
-    crop: 'centre',
-  });
+  // Calculate scale to cover the target size (like Sharp's 'cover' fit)
+  const scaleX = maxSidePx / currentWidth;
+  const scaleY = maxSidePx / currentHeight;
+  const scale = Math.max(scaleX, scaleY); // Use max for 'cover' behavior
+
+  // Calculate intermediate dimensions
+  const scaledWidth = Math.round(currentWidth * scale);
+  const scaledHeight = Math.round(currentHeight * scale);
+
+  // Resize the image
+  const resized = image.resize(scale);
+
+  // Extract (crop) the center portion to exactly maxSidePx x maxSidePx
+  const left = Math.round((scaledWidth - maxSidePx) / 2);
+  const top = Math.round((scaledHeight - maxSidePx) / 2);
+
+  return resized.crop(left, top, maxSidePx, maxSidePx);
 }
 
 function formattedMetadata(metadata: {
   width: number | undefined;
   height: number | undefined;
-  format: VipsFormat;
+  format: ImageProcessorValidFormat | UnknownFormat;
   size: number;
 }) {
   const formatName = metadata.format.replace(/^\./, '');
@@ -200,18 +218,44 @@ function metadataToFrameHeight(metadata: VipsMetadata) {
   return frameHeight;
 }
 
+function isSupportedForOutput(format: ImageProcessorValidFormat | 'unknown') {
+  return format === 'gif' || format === 'webp' || format === 'jpeg' || format === 'png';
+}
+
 function getVipsMetadata(image: Vips.Image): VipsMetadata {
-  console.warn('filter image.format', image.format);
+  console.warn('filter image', image);
+  let detectedFormat: ImageProcessorValidFormat | undefined;
+  // try {
+  //   // Check for format-specific metadata
+  //   const vipsLoader = image.get('vips-loader');
+
+  //   // Map vips loader names to MIME types
+  //   const loaderToMime: Record<string, ImageProcessorValidFormat> = {
+  //     jpegload_buffer: 'jpeg',
+  //     pngload_buffer: 'png',
+  //     webpload_buffer: 'webp',
+  //     gifload_buffer: 'gif',
+  //   };
+
+  //   detectedFormat = loaderToMime[vipsLoader];
+  // } catch (e) {
+  //   // vips-loader might not be available
+  //   console.error('vips-loader not available', e);
+  // }
+  // if (!detectedFormat) {
+  //   console.warn('failed to detect image format');
+  // }
+
+  console.error('detectedFormat', detectedFormat);
+
+  const pages = Math.max(Math.floor(image.height / image.pageHeight), 1);
+  console.warn('image', image);
   return {
     width: image.width,
     height: image.height,
-    bands: image.bands,
-    format: image.format,
-    space: image.interpretation,
-    pages: image.get('n-pages') || 1,
-    pageHeight: image.get('page-height'),
-    hasAlpha: image.hasAlpha(),
-    orientation: image.get('orientation'),
+    format: detectedFormat ?? 'unknown',
+    contentType: detectedFormat ? `image/${detectedFormat}` : 'unknown',
+    pages,
   };
 }
 
@@ -690,21 +734,23 @@ const workerActions: ImageProcessorWorkerActions = {
       throw new Error('processForLinkPreviewThumbnail: inputBuffer is required');
     }
 
-    const parsed = vipsFrom(inputBuffer, { animated: false });
+    const parsed = await vipsFrom(inputBuffer, { animated: false });
     const metadata = await metadataFromBuffer(inputBuffer, false, { animated: false });
 
     if (!metadata) {
       return null;
     }
 
-    metadataSizeIsSetOrThrow(metadata, 'processForLinkPreviewThumbnail');
-
     // for thumbnail, we actually want to enlarge the image if required
     const resized = await thumbnailCover(parsed, { maxSidePx, withoutEnlargement: false });
+    console.warn('before writeToBuffer', resized);
+    const resizedBuffer = await resized.writeToBuffer('.webp', { Q: webpDefaultQuality });
+    console.warn('after writeToBuffer', resizedBuffer);
 
-    const resizedBuffer = await resized.webp({ quality: webpDefaultQuality }).toBuffer();
     const resizedMetadata = await metadataFromBuffer(resizedBuffer);
+    console.warn('after resizedMetadata', resizedMetadata);
 
+    metadataSizeIsSetOrThrow(metadata, 'processForLinkPreviewThumbnail');
     if (!resizedMetadata) {
       return null;
     }
@@ -788,7 +834,7 @@ const workerActions: ImageProcessorWorkerActions = {
     if (
       !metadata ||
       !metadata.format ||
-      !sharp.format[metadata.format]?.output ||
+      !isSupportedForOutput(metadata.format) ||
       !metadata.width ||
       !metadata.height
     ) {
@@ -849,7 +895,7 @@ const workerActions: ImageProcessorWorkerActions = {
       };
     }
 
-    const base = vipsFrom(inputBuffer, { animated }).rotate();
+    const base = await vipsFrom(inputBuffer, { animated });
 
     // Resize if needed
     if (metadata.width > maxSidePx || metadata.height > maxSidePx) {
@@ -872,9 +918,6 @@ const workerActions: ImageProcessorWorkerActions = {
           break;
         case 'webp':
           pipeline.webp({ quality });
-          break;
-        case 'avif':
-          pipeline.avif({ quality });
           break;
         default:
           throw new Error(`Unsupported format: ${metadata.format}`);

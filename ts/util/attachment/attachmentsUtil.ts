@@ -40,6 +40,12 @@ type MaxScaleSize = {
 export async function autoScaleFile(file: File, maxMeasurements?: MaxScaleSize) {
   // this call returns null if not an image, or not one we can process, or we cannot scale it down enough
   try {
+    const plop = await ImageProcessor.processForInConversationThumbnail(
+      await file.arrayBuffer(),
+      200
+    );
+    debugger;
+
     const processed = await ImageProcessor.processForFileServerUpload(
       await file.arrayBuffer(),
       maxMeasurements?.maxSidePx ?? 2000,
