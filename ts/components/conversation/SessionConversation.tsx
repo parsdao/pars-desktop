@@ -368,7 +368,7 @@ export class SessionConversation extends Component<Props, State> {
 
     for (let i = 0; i < attachmentsFileList.length; i++) {
       // eslint-disable-next-line no-await-in-loop
-      await this.maybeAddAttachment(attachmentsFileList[i]);
+      void this.maybeAddAttachment(attachmentsFileList[i]);
     }
   }
 

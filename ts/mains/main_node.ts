@@ -28,10 +28,6 @@ import path, { join } from 'path';
 import { platform as osPlatform } from 'process';
 import url from 'url';
 
-import { ImageWorkerPool } from '../services/ImageWorkerPool';
-
-let imageWorkerPool: ImageWorkerPool;
-
 import _, { isEmpty, isNumber, isFinite } from 'lodash';
 
 import { addHandler } from '../node/global_errors';
@@ -219,6 +215,7 @@ import { tr } from '../localization/localeTools';
 import { isSharpSupported } from '../node/sharp_support/sharpSupport';
 
 import { logCrash } from '../node/crash/log_crash';
+import { ImageProcessorMain } from '../ipc/imageProcessorMain';
 
 function prepareURL(pathSegments: Array<string>, moreKeys?: { theme: any }) {
   const urlObject: url.UrlObject = {
@@ -812,15 +809,7 @@ app.on('ready', async () => {
     return;
   }
 
-  // Initialize image processing worker pool
-  imageWorkerPool = new ImageWorkerPool({
-    poolSize: 4,
-  });
-
-  // Register IPC handlers
-  ipcMain.handle('image:process', async (event, { buffer, options }) => {
-    return imageWorkerPool.processImage(buffer, options);
-  });
+  ImageProcessorMain.onReady();
 
   const key = getDefaultSQLKey();
   // Try to show the main window with the default key
@@ -967,7 +956,7 @@ app.on('before-quit', async () => {
   if (tray) {
     tray.destroy();
   }
-  await imageWorkerPool.shutdown();
+  await ImageProcessorMain.onShutDown();
 
   windowMarkShouldQuit();
 });

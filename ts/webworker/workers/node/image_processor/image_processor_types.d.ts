@@ -8,8 +8,8 @@ export type VipsMetadata = {
   height: number;
   format: ImageProcessorValidFormat | UnknownFormat;
   contentType: ImageProcessorContentType | UnknownFormat;
-  pages?: number;
-  size?: number;
+  pages: number;
+  size: number;
 };
 
 export type VipsExtension = `.${ImageProcessorValidFormat}`;

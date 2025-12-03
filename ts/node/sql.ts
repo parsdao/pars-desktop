@@ -648,7 +648,7 @@ function getUsBlindedInThatServerIfNeeded(
   const blinded = getItemById(KNOWN_BLINDED_KEYS_ITEM, instance);
   // this is essentially a duplicate of getUsBlindedInThatServer made at a database level (with db from the DB directly and not cached on the renderer side)
   try {
-    const allBlinded = JSON.parse(blinded?.value);
+    const allBlinded = blinded?.value ? JSON.parse(blinded?.value) : [];
     const found = allBlinded.find(
       (m: any) => m.serverPublicKey === room.serverPublicKey && m.realSessionId === usNaked
     );

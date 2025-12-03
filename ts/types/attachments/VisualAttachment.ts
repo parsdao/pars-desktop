@@ -12,9 +12,10 @@ import { formatTimeDurationMs } from '../../util/i18n/formatting/generics';
 import { isTestIntegration } from '../../shared/env_vars';
 import { getFeatureFlag } from '../../state/ducks/types/releasedFeaturesReduxTypes';
 import { processAvatarData } from '../../util/avatar/processAvatarData';
-import type { ProcessedAvatarDataType } from '../../webworker/workers/node/image_processor/image_processor';
-import { ImageProcessor } from '../../webworker/workers/browser/image_processor_interface';
+
 import { maxAvatarDetails, maxThumbnailDetails } from '../../util/attachment/attachmentSizes';
+import { ImageProcessor } from '../../services/imageProcessing';
+import type { ProcessedAvatarDataType } from '../ipc/imageProcessorIpc';
 
 export const THUMBNAIL_CONTENT_TYPE = 'image/webp';
 
@@ -28,7 +29,7 @@ export const getImageDimensions = async ({
   objectUrl: string;
 }): Promise<{ height: number; width: number }> => {
   const blob = await urlToBlob(objectUrl);
-  const metadata = await ImageProcessor.imageMetadata(await blob.arrayBuffer());
+  const metadata = await ImageProcessor.imageDimensions({ buffer: await blob.arrayBuffer() });
 
   if (!metadata || !metadata.height || !metadata.width) {
     throw new Error('getImageDimensions: metadata is empty');
@@ -58,10 +59,11 @@ export const makeImageThumbnailBuffer = async ({
   // Let's fix this separately in the future, but we'd want to use processForInConversationThumbnail
   // so that we have a webp when the source was animated.
   // Note: when we decide to change this, we will also need to update a bunch of things regarding `THUMBNAIL_CONTENT_TYPE` assumed type.
-  const processed = await ImageProcessor.processForInConversationThumbnail(
-    await decryptedBlob.arrayBuffer(),
-    maxThumbnailDetails.maxSide
-  );
+  const processed = await ImageProcessor.processForInConversationThumbnail({
+    buffer: await decryptedBlob.arrayBuffer(),
+    maxSidePx: maxThumbnailDetails.maxSide,
+  });
+
   if (!processed) {
     throw new Error('makeImageThumbnailBuffer failed to processForInConversationThumbnail');
   }
@@ -210,14 +212,14 @@ async function pickFileForReal() {
 }
 
 async function pickFileForTestIntegration() {
-  const blueAvatarDetails = await ImageProcessor.testIntegrationFakeAvatar(
-    maxAvatarDetails.maxSidePlanReupload,
-    {
+  const blueAvatarDetails = await ImageProcessor.testIntegrationFakeAvatar({
+    maxSidePx: maxAvatarDetails.maxSidePlanReupload,
+    background: {
       r: 0,
       g: 0,
       b: 255,
-    }
-  );
+    },
+  });
   const file = new File([blueAvatarDetails.outputBuffer], 'testIntegrationFakeAvatar.jpeg', {
     type: blueAvatarDetails.format,
   });

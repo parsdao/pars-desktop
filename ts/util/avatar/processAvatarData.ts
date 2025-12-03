@@ -1,6 +1,6 @@
 import { isArrayBuffer } from 'lodash';
-import { ImageProcessor } from '../../webworker/workers/browser/image_processor_interface';
 import { MAX_ATTACHMENT_FILESIZE_BYTES } from '../../session/constants';
+import { ImageProcessor } from '../../services/imageProcessing';
 
 /**
  * When the current device makes a change to its avatar, or a group/communities avatar we need to process it.
@@ -31,11 +31,11 @@ export async function processAvatarData(
    * 2. a fallback avatar in case the user looses its pro (static image, even if the main avatar is animated)
    */
   // this is step 1, we generate a scaled down avatar, but keep its nature (animated or not)
-  const processed = await ImageProcessor.processAvatarData(
-    arrayBuffer,
+  const processed = await ImageProcessor.processAvatarData({
+    buffer: arrayBuffer,
     planForReupload,
-    remoteChange
-  );
+    remoteChange,
+  });
 
   if (!processed) {
     throw new Error('processLocalAvatarChange: failed to process avatar');

@@ -15,7 +15,6 @@ import {
 import { DecryptedAttachmentsManager } from '../../../crypto/DecryptedAttachmentsManager';
 import { IMAGE_JPEG } from '../../../../types/MIME';
 import { urlToBlob } from '../../../../types/attachments/VisualAttachment';
-import { ImageProcessor } from '../../../../webworker/workers/browser/image_processor_interface';
 import { maxAvatarDetails } from '../../../../util/attachment/attachmentSizes';
 import { UserConfigWrapperActions } from '../../../../webworker/workers/browser/libsession_worker_interface';
 import { extendFileExpiry } from '../../../apis/file_server_api/FileServerApi';
@@ -24,6 +23,7 @@ import { DURATION, DURATION_SECONDS } from '../../../constants';
 import { uploadAndSetOurAvatarShared } from '../../../../interactions/avatar-interactions/nts-avatar-interactions';
 import { FS } from '../../../apis/file_server_api/FileServerTarget';
 import { getFeatureFlag } from '../../../../state/ducks/types/releasedFeaturesReduxTypes';
+import { ImageProcessor } from '../../../../services/imageProcessing';
 
 const defaultMsBetweenRetries = 10000;
 const defaultMaxAttempts = 3;
@@ -52,7 +52,7 @@ async function fetchLocalAvatarDetails(currentMainPath: string) {
     }
     const blob = await urlToBlob(decryptedAvatarLocalUrl);
     const decryptedAvatarData = await blob.arrayBuffer();
-    const metadata = await ImageProcessor.imageMetadata(decryptedAvatarData);
+    const metadata = await ImageProcessor.imageDimensions({ buffer: decryptedAvatarData });
     if (!metadata) {
       window.log.warn('Failed to get metadata from avatar');
       return null;

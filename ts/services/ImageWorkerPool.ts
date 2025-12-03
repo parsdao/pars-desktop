@@ -4,6 +4,10 @@
 import { Worker } from 'worker_threads';
 import path from 'path';
 import os from 'os';
+import type {
+  IpcImageProcessorChannelName,
+  IpcImageProcessorRequest,
+} from '../types/ipc/imageProcessorIpc';
 
 interface PendingTask {
   resolve: (value: any) => void;
@@ -128,16 +132,24 @@ export class ImageWorkerPool {
 
     availableWorker.busy = true;
     this.pending.set(task.id, task.pending);
+    console.info('running task', task.id, ' on worker', availableWorker.worker.threadId);
     availableWorker.worker.postMessage(task.data);
   }
 
-  async process(operation: string, data: any): Promise<any> {
+  async process(
+    operation: IpcImageProcessorChannelName,
+    data: IpcImageProcessorRequest<IpcImageProcessorChannelName>
+  ): Promise<any> {
     if (this.shuttingDown) {
       throw new Error('Worker pool is shutting down');
     }
 
     const id = this.messageId++;
-    const taskData = { id, operation, data };
+    const taskData = {
+      id,
+      operation,
+      data,
+    };
 
     return new Promise((resolve, reject) => {
       const pending: PendingTask = {
@@ -169,15 +181,31 @@ export class ImageWorkerPool {
   }
 
   // Convenience methods for common operations
-  async processImage(
-    buffer: ArrayBuffer,
-    options: {
-      maxSidePx: number;
-      quality?: number;
-      withoutEnlargement?: boolean;
-    }
+
+  async processForLinkPreviewThumbnail(
+    args: IpcImageProcessorRequest<'processForLinkPreviewThumbnail'>
   ) {
-    return this.process('thumbnail', { buffer, options });
+    return this.process('processForLinkPreviewThumbnail', args);
+  }
+
+  async processForInConversationThumbnail(
+    args: IpcImageProcessorRequest<'processForInConversationThumbnail'>
+  ) {
+    return this.process('processForInConversationThumbnail', args);
+  }
+
+  async testIntegrationFakeAvatar(args: IpcImageProcessorRequest<'testIntegrationFakeAvatar'>) {
+    return this.process('testIntegrationFakeAvatar', args);
+  }
+
+  async imageDimensions(args: IpcImageProcessorRequest<'imageDimensions'>) {
+    return this.process('imageDimensions', args);
+  }
+  async processAvatarData(args: IpcImageProcessorRequest<'processAvatarData'>) {
+    return this.process('processAvatarData', args);
+  }
+  async processForFileServerUpload(args: IpcImageProcessorRequest<'processForFileServerUpload'>) {
+    return this.process('processForFileServerUpload', args);
   }
 
   // Graceful shutdown
@@ -206,7 +234,8 @@ export class ImageWorkerPool {
     await Promise.all(this.workers.map(({ worker }) => worker.terminate()));
 
     this.workers = [];
-    console.log('Worker pool shut down');
+
+    // console.log('Worker pool shut down');
   }
 
   // Stats for monitoring

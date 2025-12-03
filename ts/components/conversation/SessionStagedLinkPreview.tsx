@@ -1,4 +1,3 @@
-import { ipcRenderer } from 'electron';
 import { AbortSignal } from 'abort-controller';
 import { useEffect, useMemo } from 'react';
 import styled from 'styled-components';
@@ -19,40 +18,13 @@ import { tr } from '../../localization/localeTools';
 import { LinkPreviewUtil } from '../../util';
 import { fetchLinkPreviewImage } from '../../util/linkPreviewFetch';
 import { LinkPreviews } from '../../util/linkPreviews';
+import { maxThumbnailDetails } from '../../util/attachment/attachmentSizes';
+import { ImageProcessor } from '../../services/imageProcessing';
 
 interface StagedLinkPreviewProps extends StagedLinkPreviewData {
   onClose: (url: string) => void;
 }
 export const LINK_PREVIEW_TIMEOUT = 20 * 1000;
-
-export async function processImageForThumbnail(
-  buffer: ArrayBuffer,
-  maxSidePx: number,
-  quality: number = 80
-) {
-  try {
-    const result = await ipcRenderer.invoke('image:process', {
-      buffer,
-      options: {
-        maxSidePx,
-        quality,
-        withoutEnlargement: true,
-      },
-    });
-
-    return {
-      outputBuffer: result.buffer,
-      width: result.width,
-      height: result.height,
-      size: result.size,
-      format: 'webp' as const,
-      contentType: 'image/webp' as const,
-    };
-  } catch (error) {
-    console.error('Image processing failed:', error);
-    return null;
-  }
-}
 
 export const getPreview = async (url: string, abortSignal: AbortSignal) => {
   // This is already checked elsewhere, but we want to be extra-careful.
@@ -80,15 +52,12 @@ export const getPreview = async (url: string, abortSignal: AbortSignal) => {
       if (!fullSizeImage) {
         throw new Error('Failed to fetch link preview image');
       }
-
-      const processed = await processImageForThumbnail(fullSizeImage.data, 200, 80);
-
       // Ensure that this file is either small enough or is resized to meet our
       //   requirements for link preview thumbnails
-      // const processed = await processForLinkPreviewThumbnail(
-      //   fullSizeImage.data,
-      //   maxThumbnailDetails.maxSide
-      // );
+      const processed = await ImageProcessor.processForLinkPreviewThumbnail({
+        buffer: fullSizeImage.data,
+        maxSidePx: maxThumbnailDetails.maxSide,
+      });
 
       return {
         title,

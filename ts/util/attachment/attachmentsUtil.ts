@@ -8,8 +8,8 @@ import { AttachmentType, save } from '../../types/Attachment';
 import { getAbsoluteAttachmentPath, processNewAttachment } from '../../types/MessageAttachment';
 
 import { MAX_ATTACHMENT_FILESIZE_BYTES } from '../../session/constants';
-import { ImageProcessor } from '../../webworker/workers/browser/image_processor_interface';
-import type { ProcessedLinkPreviewThumbnailType } from '../../webworker/workers/node/image_processor/image_processor';
+import { ImageProcessor } from '../../services/imageProcessing';
+import type { ProcessedLinkPreviewThumbnailType } from '../../types/ipc/imageProcessorIpc';
 
 /**
  * The logic for sending attachments is as follow:
@@ -40,17 +40,11 @@ type MaxScaleSize = {
 export async function autoScaleFile(file: File, maxMeasurements?: MaxScaleSize) {
   // this call returns null if not an image, or not one we can process, or we cannot scale it down enough
   try {
-    const plop = await ImageProcessor.processForInConversationThumbnail(
-      await file.arrayBuffer(),
-      200
-    );
-    debugger;
-
-    const processed = await ImageProcessor.processForFileServerUpload(
-      await file.arrayBuffer(),
-      maxMeasurements?.maxSidePx ?? 2000,
-      maxMeasurements?.maxSizeBytes ?? MAX_ATTACHMENT_FILESIZE_BYTES
-    );
+    const processed = await ImageProcessor.processForFileServerUpload({
+      buffer: await file.arrayBuffer(),
+      maxSidePx: maxMeasurements?.maxSidePx ?? 2000,
+      maxSizeBytes: maxMeasurements?.maxSizeBytes ?? MAX_ATTACHMENT_FILESIZE_BYTES,
+    });
 
     return processed;
   } catch (e) {
