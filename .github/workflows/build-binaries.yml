@@ -2,32 +2,31 @@
 # We could save and restore cache to different jobs but that takes roughly 3 minutes to save,
 # so better run them in parrallel instead.
 
-name: Session Desktop
+name: Pars Desktop
 
 on:
   push:
     branches:
-      - master
+      - main
       - dev
       - "release/**"
       - "ci/**"
-      - feat/pro-libsession
   pull_request:
     branches:
+      - main
       - dev
       - "release/**"
       - "ci/**"
-      - feat/pro-libsession
   workflow_dispatch:
     inputs:
       target_branch:
         description: "Branch to make a release of"
         required: true
-        default: "master"
+        default: "dev"
 
 # Dynamic name for the run
 run-name: >
-  Session Desktop ${{ github.event_name == 'workflow_dispatch' && format('(manual run on {0})', github.event.inputs.target_branch) || format('(push)', github.event.pull_request.number || github.ref) }}
+  Pars Desktop ${{ github.event_name == 'workflow_dispatch' && format('(manual run on {0})', github.event.inputs.target_branch) || format('(push)', github.event.pull_request.number || github.ref) }}
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
@@ -39,7 +38,7 @@ jobs:
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       # we only want to publish on "push to master" or alpha releases. When we don't want to publish, we want to upload artefacts
-      SHOULD_PUBLISH: ${{ github.event_name == 'push' && github.ref == 'refs/heads/master' }}
+      SHOULD_PUBLISH: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
       SHOULD_PUBLISH_ALPHA: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/heads/release') && contains(github.ref, '-alpha.') }}
 
     outputs:
@@ -74,7 +73,7 @@ jobs:
         uses: ncipollo/release-action@v1
         with:
           tag: v${{ steps.get_version.outputs.VERSION_TAG }}
-          name: "Session ${{ steps.get_version.outputs.VERSION_TAG }}"
+          name: "Pars ${{ steps.get_version.outputs.VERSION_TAG }}"
           draft: true # important to keep this, so we **NEVER** make a live release through the CI
           bodyFile: ${{ env.SHOULD_PUBLISH_ALPHA == 'true' && 'build/release-notes-alpha.md' || 'build/release-notes.md' }}
           allowUpdates: true
