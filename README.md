@@ -1,133 +1,156 @@
-# Session Desktop
+# Lux Messenger Desktop
 
-[Download at getsession.org](https://getsession.org/download)
+> Private messaging on the Lux Network - A fork of [Session Desktop](https://github.com/session-foundation/session-desktop)
 
 ## Summary
 
-Session integrates directly with [Oxen Service Nodes](https://docs.oxen.io/about-the-oxen-blockchain/oxen-service-nodes), which are a set of distributed, decentralized and Sybil resistant nodes. Service Nodes act as servers which store messages offline, and a set of nodes which allow for onion routing functionality obfuscating users IP Addresses. For a full understanding of how Session works, read the [Session Whitepaper](https://getsession.org/whitepaper).
+Lux Messenger is a privacy-focused messaging application built on the Lux Network, leveraging post-quantum cryptography and decentralized storage nodes. This fork connects to the Lux SessionVM instead of the Oxen network.
 
-<br/>
-<br/>
-<img src="https://i.imgur.com/ydVhH00.png" alt="Screenshot of Session Desktop" />
+## Architecture
 
-## Want to Contribute? Found a Bug or Have a feature request?
-
-Please search for any [existing issues](https://github.com/session-foundation/session-desktop/issues) that describe your bug or feature request to avoid duplicate submissions.
-
-Submissions can be made by making a pull request to our development branch.If you don't know where to start contributing please read [Contributing.md](CONTRIBUTING.md) and refer to issues tagged with the [good-first-issue](https://github.com/session-foundation/session-desktop/issues?q=is%3Aopen+is%3Aissue+label%3A%22good+first+issue%22) tag.
-
-## Supported platforms
-
-Check Session's system requirements and what platforms are supported [here](https://github.com/session-foundation/session-desktop/releases/latest#user-content-supported-platforms).
-
-## Build instructions
-
-Build instructions can be found in [Contributing.md](CONTRIBUTING.md).
-
-## Translations
-
-Want to help us translate Session into your language? You can do so at https://getsession.org/translate!
-
-## Verifying signatures
-
-**Step 1:**
-
-Add Jason's GPG key. Jason Rhinelander, a member of the [Session Technology Foundation](https://session.foundation/) and is the current signer for all Session Desktop releases. His GPG key can be found on his GitHub and other sources.
-
-```sh
-wget https://github.com/jagerman.gpg
-gpg --import jagerman.gpg
+```
+┌──────────────────┐     ┌──────────────────┐     ┌──────────────────┐
+│  Lux Messenger   │     │   luxfi/session  │     │ luxcpp/session   │
+│    (Desktop)     │────>│   Go VM + API    │────>│  C++ Storage     │
+│  TypeScript/     │     │                  │     │  (GPU-accel)     │
+│    Electron      │     │ Post-Quantum     │     │                  │
+└──────────────────┘     │ Crypto (FIPS)    │     │  ML-KEM-768      │
+                         └──────────────────┘     │  ML-DSA-65       │
+                                                  └──────────────────┘
 ```
 
-**Step 2:**
+## Quick Start
 
-Get the signed hashes for this release. `SESSION_VERSION` needs to be updated for the release you want to verify.
+### 1. Configure for Lux Network
 
-```sh
-export SESSION_VERSION=1.15.0
-wget https://github.com/session-foundation/session-desktop/releases/download/v$SESSION_VERSION/signature.asc
+Copy the example configuration:
+```bash
+cp .env.lux .env
 ```
 
-**Step 3:**
+Or set environment variables directly:
+```bash
+# Point to your Lux seed node
+export LOCAL_DEVNET_SEED_URL=http://localhost:22023/
 
-Verify the signature of the hashes of the files.
-
-```sh
-gpg --verify signature.asc 2>&1 |grep "Good signature from"
+# Optional: custom file server
+export LUX_FILE_SERVER=files.lux.network
 ```
 
-The command above should print "`Good signature from "Jason Rhinelander...`". If it does, the hashes are valid but we still have to make the sure the signed hashes match the downloaded files.
+### 2. Install Dependencies
 
-**Step 4:**
-
-Make sure the two commands below return the same hash for the file you are checking. If they do, file is valid.
-
-<details>
-<summary>Linux</summary>
-
-```sh
-sha256sum session-desktop-linux-amd64-$SESSION_VERSION.deb
-grep .deb signature.asc
+```bash
+npm install
 ```
 
-</details>
+### 3. Run Development Server
 
-<details>
-<summary>macOS</summary>
-
-**Apple Silicon**
-
-```sh
-sha256sum releases/session-desktop-mac-arm64-$SESSION_VERSION.dmg
-grep .dmg signature.asc
+```bash
+npm run dev
 ```
 
-**Intel**
+### 4. Build for Production
 
-```sh
-sha256sum releases/session-desktop-mac-x64-$SESSION_VERSION.dmg
-grep .dmg signature.asc
+```bash
+npm run build
 ```
 
-</details>
+## Configuration
 
-<details>
-<summary>Windows</summary>
+### Environment Variables
 
-**PowerShell**
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `LOCAL_DEVNET_SEED_URL` | Seed node URL for custom network | (none - uses Session mainnet) |
+| `LUX_FILE_SERVER` | File server hostname | `filev2.getsession.org` |
+| `LUX_NETWORK_SERVER` | Network status server | `networkv1.getsession.org` |
+| `NODE_APP_INSTANCE` | `testnet` for testnet mode | (production) |
+| `SESSION_DEBUG` | Enable debug logging | (disabled) |
 
-```PowerShell
-Get-FileHash -Algorithm SHA256 session-desktop-win-x64-$SESSION_VERSION.exe  # checksum is uppercase but should otherwise match
-Select-String -Pattern ".exe" signature.asc
+### Running Against Local SessionVM
+
+1. Start the Lux SessionVM node:
+```bash
+cd ~/work/lux/session
+go run ./cmd/node
 ```
 
-**Bash**
-
-```sh
-sha256sum session-desktop-win-x64-$SESSION_VERSION.exe
-grep .exe signature.asc
+2. Configure desktop to connect:
+```bash
+export LOCAL_DEVNET_SEED_URL=http://localhost:22023/
+npm run dev
 ```
 
-</details>
+## Related Repositories
 
-## Debian repository
+| Repository | Description |
+|------------|-------------|
+| [luxfi/session](https://github.com/luxfi/session) | Go implementation - VM + API layer |
+| [luxcpp/session](https://github.com/luxcpp/session) | C++ storage server (GPU-accelerated) |
+| [luxfi/crypto](https://github.com/luxfi/crypto) | Post-quantum cryptography (ML-KEM, ML-DSA) |
+| [lux-tel/session-ios](https://github.com/lux-tel/session-ios) | iOS mobile client |
+| [lux-tel/session-android](https://github.com/lux-tel/session-android) | Android mobile client |
+| [lux-tel/libsession-util](https://github.com/lux-tel/libsession-util) | Shared native library |
 
-Please visit https://deb.oxen.io/
+## Cryptography
+
+Lux Messenger uses FIPS-compliant post-quantum cryptography:
+
+- **ML-KEM-768** (FIPS 203) - Key encapsulation mechanism
+- **ML-DSA-65** (FIPS 204) - Digital signatures
+- **XChaCha20-Poly1305** - Symmetric encryption (AEAD)
+- **Blake2b-256** - Session ID derivation
+
+Session ID format: `07` + hex(Blake2b-256(KEM_pk || DSA_pk)) = 66 characters
+
+## Key Differences from Session
+
+| Feature | Session | Lux Messenger |
+|---------|---------|---------------|
+| Network | Oxen Service Nodes | Lux SessionVM |
+| Cryptography | X25519/Ed25519 | ML-KEM-768/ML-DSA-65 (post-quantum) |
+| Storage | Oxen snodes | Lux storage nodes (GPU-accelerated) |
+| Configuration | Hardcoded | Environment-configurable |
+
+## Development
+
+### Project Structure
+
+```
+ts/
+├── session/
+│   ├── apis/
+│   │   ├── seed_node_api/    # Seed node discovery
+│   │   ├── snode_api/        # Storage node API
+│   │   └── file_server_api/  # File uploads
+│   ├── crypto/               # Cryptographic operations
+│   └── onions/               # Onion routing
+├── state/
+│   └── ducks/types/          # Feature flags
+└── preload.js                # Network configuration
+```
+
+### Debug Logging
+
+Enable verbose logging for troubleshooting:
+```bash
+export SESSION_DEBUG=1
+export SESSION_DEBUG_SWARM_POLLING=1
+export SESSION_DEBUG_SNODE_POOL=1
+npm run dev
+```
+
+## Contributing
+
+1. Fork this repository
+2. Create a feature branch
+3. Make your changes
+4. Submit a pull request
 
 ## License
 
-Copyright 2011 Whisper Systems
+GPL-3.0 - Same as upstream Session Desktop
 
-Copyright 2013-2017 Open Whisper Systems
+## Upstream
 
-Copyright 2019-2024 The Oxen Project
-
-Copyright 2024-2025 Session Technology Foundation
-
-Licensed under the GPLv3: https://www.gnu.org/licenses/gpl-3.0.html
-
-## Attributions
-
-The IP-to-country mapping data used in this project is provided by [MaxMind GeoLite2](https://dev.maxmind.com/geoip/geolite2-free-geolocation-data).
-
-This project uses the [Lucide Icon Font](https://lucide.dev/), which is licensed under the [ISC License](./third_party_licenses/LucideLicense.txt).
+This project is a fork of [Session Desktop](https://github.com/session-foundation/session-desktop) by the Session Technology Foundation.
