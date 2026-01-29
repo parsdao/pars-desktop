@@ -1,17 +1,17 @@
 {
   "$schema": "./package.schema.json",
-  "name": "session-desktop",
-  "productName": "Session",
-  "description": "Private messaging from your desktop",
+  "name": "pars-desktop",
+  "productName": "Pars",
+  "description": "Private messaging for the Pars Network",
   "version": "1.17.6",
   "license": "GPL-3.0",
   "author": {
-    "name": "Session Foundation",
-    "email": "contact@session.foundation"
+    "name": "Pars DAO",
+    "email": "pars@pars.network"
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/session-foundation/session-desktop.git"
+    "url": "https://github.com/parsdao/pars-desktop.git"
   },
   "main": "ts/mains/main_node.js",
   "resolutions": {
@@ -229,7 +229,7 @@
     "artifactName": "${name}-${os}-${arch}-${version}.${ext}",
     "generateUpdatesFilesForAllChannels": true,
     "directories": {
-      "output": "release"
+      "output": "dist"
     },
     "extraResources": [
       {
