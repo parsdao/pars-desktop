@@ -32,6 +32,11 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: write
+  packages: write
+  actions: read
+
 jobs:
   create_draft_release_if_needed:
     runs-on: ubuntu-latest
